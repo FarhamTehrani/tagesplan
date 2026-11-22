@@ -6,6 +6,14 @@ export const AUTH_KEY = "tagesplan.auth";
 export class AuthError extends Error {}
 /** Server nicht erreichbar (offline). */
 export class NetworkError extends Error {}
+/** Server hat mit einem Fehler geantwortet. `code` ist z. B. PGRST205 (Tabelle fehlt). */
+export class ServerError extends Error {
+  constructor(message, status, code) {
+    super(message);
+    this.status = status;
+    this.code = code ?? null;
+  }
+}
 
 function authMessage(status, body) {
   const code = body?.error_code || body?.error;
@@ -130,7 +138,7 @@ export function createCloud({
       }
       if (!res.ok) {
         const body = await readJson(res);
-        throw new Error(body?.message ? `${body.message} (${res.status})` : `Serverfehler (${res.status}).`);
+        throw new ServerError(body?.message ? `${body.message} (${res.status})` : `Serverfehler (${res.status}).`, res.status, body?.code);
       }
       return res;
     }
@@ -160,6 +168,24 @@ export function createCloud({
     }
   }
 
+  /** GET auf eine Tabelle, z. B. get("/calendar_events?select=*"). */
+  async function get(pathAndQuery) {
+    const body = await (await rest(pathAndQuery)).json();
+    if (!Array.isArray(body)) throw new Error("Unerwartete Antwort vom Server.");
+    return body;
+  }
+
+  /** Datenbankfunktion aufrufen. */
+  async function rpc(name, args = {}) {
+    const res = await rest(`/rpc/${name}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(args),
+    });
+    const text = await res.text();
+    return text ? JSON.parse(text) : null;
+  }
+
   async function signOut() {
     const s = session;
     writeSession(null);
@@ -182,5 +208,7 @@ export function createCloud({
     signOut,
     pull,
     push,
+    get,
+    rpc,
   };
 }

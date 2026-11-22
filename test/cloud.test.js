@@ -1,13 +1,18 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createCloud, AuthError, NetworkError, AUTH_KEY } from "../cloud.js";
+import { createCloud, AuthError, NetworkError, ServerError, AUTH_KEY } from "../cloud.js";
 
 function memoryStorage(init = {}) {
   const m = new Map(Object.entries(init));
   return { getItem: (k) => m.get(k) ?? null, setItem: (k, v) => m.set(k, String(v)), removeItem: (k) => m.delete(k), m };
 }
 
-const json = (status, body) => ({ ok: status >= 200 && status < 300, status, json: async () => body });
+const json = (status, body) => ({
+  ok: status >= 200 && status < 300,
+  status,
+  json: async () => body,
+  text: async () => (body == null ? "" : JSON.stringify(body)),
+});
 const tokenBody = (n) => ({ access_token: `at${n}`, refresh_token: `rt${n}`, expires_in: 3600, user: { id: "u1", email: "a@b.de" } });
 
 function setup(handler, { session, now = 1_000_000 } = {}) {
@@ -112,4 +117,17 @@ test("signOut löscht die Sitzung auch offline", async () => {
   await cloud.signOut();
   assert.equal(cloud.user, null);
   assert.equal(storage.getItem(AUTH_KEY), null);
+});
+
+test("rpc ruft Funktion auf und liest Text- und leere Antworten", async () => {
+  const { cloud, calls } = setup((url) => (url.endsWith("create_calendar_token") ? json(200, "abc") : json(204, null)), { session: validSession });
+  assert.equal(await cloud.rpc("create_calendar_token"), "abc");
+  assert.equal(calls[0].url, "https://x.supabase.co/rest/v1/rpc/create_calendar_token");
+  assert.equal(calls[0].init.method, "POST");
+  assert.equal(await cloud.rpc("remove_calendar"), null);
+});
+
+test("fehlende Tabelle → ServerError mit Code", async () => {
+  const { cloud } = setup(() => json(404, { code: "PGRST205", message: "Could not find the table" }), { session: validSession });
+  await assert.rejects(cloud.get("/calendar_events?select=id"), (e) => e instanceof ServerError && e.code === "PGRST205" && e.status === 404);
 });

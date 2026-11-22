@@ -11,6 +11,7 @@
   --warn: #b4442c;
   --warn-soft: #f8e3dd;
   --termin: #3b5bdb;
+  --apple: #d6455d;
   --shadow: 0 1px 2px rgb(0 0 0 / 0.05), 0 6px 20px rgb(0 0 0 / 0.06);
   --toast-action: #8fd9c2;
   color-scheme: light;
@@ -30,6 +31,7 @@
     --warn: #f08a70;
     --warn-soft: #3d231d;
     --termin: #8ea6ff;
+    --apple: #f2849a;
     --shadow: 0 1px 2px rgb(0 0 0 / 0.4);
     --toast-action: #1f6f5c;
     color-scheme: dark;
@@ -315,3 +317,37 @@ button { font: inherit; color: inherit; }
 .sync-status[data-state="error"], .sync-status[data-state="auth"] { color: var(--warn); }
 #account-info .menu-list { margin-top: 10px; }
 .menu-list > button:disabled { opacity: 0.5; cursor: default; }
+
+/* Apple-Kalender */
+.termin.apple .row-main { border-left-color: var(--apple); }
+.badge.now.apple-badge { background: var(--apple); }
+.cal-tag { display: inline-flex; align-items: center; gap: 4px; }
+.cal-tag::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--apple); }
+.dots .p { background: var(--apple); }
+.info-title { margin: 4px 0 2px; font-size: 22px; line-height: 1.25; overflow-wrap: anywhere; }
+.info-time { margin: 0 0 12px; color: var(--muted); }
+.info-list { margin: 0; background: var(--surface-2); border-radius: 12px; overflow: hidden; }
+.info-list > div { display: flex; gap: 12px; padding: 12px 16px; }
+.info-list > div + div { border-top: 1px solid var(--line); }
+.info-list dt { color: var(--muted); width: 72px; flex: none; }
+.info-list dd { margin: 0; overflow-wrap: anywhere; }
+
+.steps { margin: 16px 0 0; padding-left: 0; list-style: none; counter-reset: step; }
+.steps > li { counter-increment: step; position: relative; padding: 0 0 18px 40px; }
+.steps > li::before {
+  content: counter(step);
+  position: absolute; left: 0; top: 0;
+  width: 26px; height: 26px; border-radius: 50%;
+  background: var(--accent-soft); color: var(--accent);
+  display: grid; place-items: center; font-weight: 700; font-size: 14px;
+}
+.steps h3 { margin: 2px 0 4px; font-size: 16px; }
+.steps p, .steps ul { margin: 4px 0; font-size: 15px; }
+.steps ul { padding-left: 18px; }
+.steps li li { margin: 3px 0; }
+.steps .primary-btn { margin-top: 8px; }
+.template { background: var(--surface-2); border-radius: 10px; padding: 10px 12px; font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 14px !important; overflow-wrap: anywhere; }
+code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.9em; background: var(--surface-2); border-radius: 5px; padding: 1px 5px; }
+.copy-row { display: flex; align-items: center; gap: 8px; margin: 6px 0; background: var(--surface-2); border-radius: 10px; padding: 6px 6px 6px 12px; }
+.copy-row code { flex: 1; min-width: 0; background: none; padding: 0; font-size: 13px; overflow-wrap: anywhere; user-select: all; -webkit-user-select: all; }
+.copy-btn { flex: none; border: 0; border-radius: 8px; background: var(--accent); color: var(--accent-text); font-weight: 600; font-size: 14px; padding: 8px 12px; cursor: pointer; }

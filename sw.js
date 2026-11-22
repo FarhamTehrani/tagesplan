@@ -1,5 +1,5 @@
 // Netzwerk zuerst (damit Updates sofort ankommen), offline aus dem Cache.
-const CACHE = "tagesplan-v2";
+const CACHE = "tagesplan-v3";
 const SHELL = [
   "./",
   "index.html",

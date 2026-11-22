@@ -2,8 +2,9 @@ import {
   STORAGE_KEY, todayKey, addDays, weekDays, formatLong, formatShort, formatWeekday, fromKey,
   relativeLabel, normalizeItems, normalizeItem, dayView, nowAndNext, dayMarkers, toggleDone,
   toMinutes, newId, normalizeTombstones, applyChanges, rowsToPush, mergeRemote,
+  normalizeAppleEvents, appleForDay, describeAppleTime,
 } from "./lib.js";
-import { createCloud, AuthError, NetworkError } from "./cloud.js";
+import { createCloud, AuthError, NetworkError, ServerError } from "./cloud.js";
 import { SUPABASE_URL, SUPABASE_KEY } from "./config.js";
 
 const $ = (id) => document.getElementById(id);
@@ -18,7 +19,13 @@ const state = {
   pending: new Set(), // IDs, die noch nicht zum Server übertragen wurden
   cursor: null, // neuester bekannter Server-Zeitpunkt (synced_at)
   lastSyncAt: null,
+  // Apple-Kalender (vom Kurzbefehl übertragen, nur lesbar)
+  apple: emptyApple(),
 };
+
+function emptyApple() {
+  return { connected: null, lastImport: null, lastCount: null, events: [], error: null };
+}
 
 const cloud = SUPABASE_URL && SUPABASE_KEY ? createCloud({ url: SUPABASE_URL, key: SUPABASE_KEY }) : null;
 
@@ -42,6 +49,16 @@ function load() {
       state.pending = new Set(Array.isArray(data.pending) ? data.pending.filter((id) => typeof id === "string") : []);
       state.cursor = typeof data.cursor === "string" ? data.cursor : null;
       state.lastSyncAt = Number.isFinite(data.lastSyncAt) ? data.lastSyncAt : null;
+      const a = data.apple;
+      if (a && typeof a === "object") {
+        state.apple = {
+          ...emptyApple(),
+          connected: typeof a.connected === "boolean" ? a.connected : null,
+          lastImport: typeof a.lastImport === "string" ? a.lastImport : null,
+          lastCount: Number.isFinite(a.lastCount) ? a.lastCount : null,
+          events: normalizeAppleEvents(a.events),
+        };
+      }
     }
   } catch {
     showToast("Gespeicherte Daten konnten nicht gelesen werden.");
@@ -58,6 +75,12 @@ function save() {
       pending: [...state.pending],
       cursor: state.cursor,
       lastSyncAt: state.lastSyncAt,
+      apple: {
+        connected: state.apple.connected,
+        lastImport: state.apple.lastImport,
+        lastCount: state.apple.lastCount,
+        events: state.apple.events,
+      },
     }));
   } catch {
     showToast("Speichern fehlgeschlagen. Ist der Speicher voll oder privat?");
@@ -118,7 +141,7 @@ function render() {
 
   renderWeek();
 
-  const view = dayView(items, day, today);
+  const view = dayView(items, day, today, appleForDay(state.apple.events, day));
   renderTermine(view.termine, isToday);
   renderAufgaben(view);
 
@@ -139,6 +162,8 @@ function renderWeek() {
   list.replaceChildren(
     ...weekDays(state.day).map((key) => {
       const m = dayMarkers(state.items, key);
+      const apple = appleForDay(state.apple.events, key).length;
+      m.termine += apple;
       const label = `${formatLong(key)}${m.termine ? `, ${m.termine} Termine` : ""}${m.aufgaben ? `, ${m.aufgaben} offene Aufgaben` : ""}`;
       return h("li", {},
         h("button", {
@@ -150,7 +175,10 @@ function renderWeek() {
         },
         h("span", { class: "wd" }, formatWeekday(key)),
         h("span", { class: "num" }, fromKey(key).getDate()),
-        h("span", { class: "dots" }, m.termine ? h("i", { class: "t" }) : null, m.aufgaben ? h("i", { class: "a" }) : null)));
+        h("span", { class: "dots" },
+          m.termine > apple ? h("i", { class: "t" }) : null,
+          apple ? h("i", { class: "p" }) : null,
+          m.aufgaben ? h("i", { class: "a" }) : null)));
     }),
   );
 }
@@ -172,18 +200,33 @@ function renderTermine(termine, isToday) {
     ...termine.map((t) => {
       const endMin = t.start ? (t.end ? toMinutes(t.end) : toMinutes(t.start) + 60) : null;
       const past = isToday && endMin != null && endMin <= mins;
-      const sub = [t.end ? `bis ${t.end}` : null, t.note ? firstLine(t.note) : null].filter(Boolean).join(" · ");
-      return h("li", { class: `termin${past ? " past" : ""}` },
+      const apple = t.source === "apple";
+      const sub = [
+        t.end ? `bis ${t.end}` : null,
+        apple && t.calendar ? h("span", { class: "cal-tag" }, t.calendar) : null,
+        apple ? (t.location ? firstLine(t.location) : null) : t.note ? firstLine(t.note) : null,
+      ].filter(Boolean);
+      return h("li", { class: `termin${apple ? " apple" : ""}${past ? " past" : ""}` },
         h("div", { class: "row" },
-          h("button", { type: "button", class: "row-main", onclick: () => openEditor(t) },
+          h("button", { type: "button", class: "row-main", onclick: () => (apple ? openAppleInfo(t.event) : openEditor(t)) },
             h("span", { class: "time" }, t.start ?? h("small", {}, "ganzt.")),
             h("span", { class: "row-text" },
               h("span", { class: "row-title" }, t.title,
                 t.id === current ? h("span", { class: "badge now" }, "Jetzt") : null,
                 t.id === next ? h("span", { class: "badge next" }, "Als Nächstes") : null),
-              sub ? h("span", { class: "row-sub" }, sub) : null))));
+              sub.length ? h("span", { class: "row-sub" }, sub.flatMap((x, i) => (i ? [" · ", x] : [x]))) : null))));
     }),
   );
+}
+
+function openAppleInfo(ev) {
+  $("apple-info-title").textContent = ev.title;
+  $("apple-info-time").textContent = describeAppleTime(ev);
+  $("apple-info-cal").textContent = ev.calendar;
+  $("apple-info-cal-row").hidden = !ev.calendar;
+  $("apple-info-loc").textContent = ev.location;
+  $("apple-info-loc-row").hidden = !ev.location;
+  $("apple-info").showModal();
 }
 
 function renderAufgaben(view) {
@@ -433,14 +476,39 @@ async function syncOnce() {
     state.pending = merged.pending;
     state.cursor = merged.cursor;
     state.lastSyncAt = Date.now();
+
+    // 3. Termine aus dem Apple-Kalender holen (Fehler hier stören den Abgleich der Einträge nicht)
+    await fetchApple();
+
     save();
-    if (merged.changed) render();
+    render();
     setSyncState(state.pending.size ? "pending" : "ok");
   } catch (e) {
     save();
     if (e instanceof AuthError) setSyncState("auth", e.message);
     else if (e instanceof NetworkError) setSyncState("offline");
     else setSyncState("error", e.message);
+  }
+}
+
+async function fetchApple() {
+  try {
+    const since = new Date(Date.now() - 60 * 86400000).toISOString();
+    const [status, events] = await Promise.all([
+      cloud.get("/calendar_tokens?select=last_used_at,last_count"),
+      cloud.get(`/calendar_events?select=id,title,start_at,end_at,all_day,calendar,location&end_at=gte.${encodeURIComponent(since)}&order=start_at.asc&limit=5000`),
+    ]);
+    state.apple = {
+      connected: status.length > 0,
+      lastImport: status[0]?.last_used_at ?? null,
+      lastCount: status[0]?.last_count ?? null,
+      events: normalizeAppleEvents(events),
+      error: null,
+    };
+  } catch (e) {
+    if (e instanceof AuthError || e instanceof NetworkError) throw e;
+    // Tabelle fehlt → kalender.sql wurde noch nicht ausgeführt
+    state.apple.error = e instanceof ServerError && (e.code === "PGRST205" || e.code === "42P01" || e.status === 404) ? "missing" : e.message;
   }
 }
 
@@ -490,9 +558,102 @@ function renderAccount() {
     err.textContent = sync.message;
     err.hidden = false;
   }
+  renderApple();
   // Roter Punkt am Menü: Anmeldung abgelaufen oder Abgleich kaputt
   $("menu-dot").hidden = !(sync.state === "error" || (sync.state === "auth" && state.accountId));
 }
+
+function appleStatusText() {
+  const a = state.apple;
+  if (a.error === "missing") return "Noch nicht verfügbar: Im Supabase-Dashboard muss zuerst supabase/kalender.sql ausgeführt werden.";
+  if (a.error) return `Fehler: ${a.error}`;
+  if (!a.connected) return "Übertrage Termine aus deinem iPhone-Kalender mit einem Kurzbefehl.";
+  if (!a.lastImport) return "Schlüssel erzeugt. Der Kurzbefehl hat noch keine Termine übertragen.";
+  const d = new Date(a.lastImport);
+  const when = todayKey(d) === state.today ? `heute um ${timeFmt.format(d)}` : `${formatShort(todayKey(d))} um ${timeFmt.format(d)}`;
+  const n = a.lastCount ?? a.events.length;
+  return `Zuletzt übertragen ${when} (${n === 1 ? "1 Termin" : `${n} Termine`}).`;
+}
+
+function renderApple() {
+  const user = cloud?.user;
+  $("apple-section").hidden = !user;
+  if (!user) return;
+  const status = $("apple-status");
+  status.textContent = appleStatusText();
+  status.dataset.state = state.apple.error ? "error" : "";
+  $("apple-setup-btn").textContent = state.apple.connected ? "Anleitung & neuer Schlüssel" : "Kurzbefehl einrichten";
+  $("apple-setup-btn").disabled = state.apple.error === "missing";
+  $("apple-remove-btn").hidden = !state.apple.connected;
+}
+
+const shortcutDialog = $("shortcut");
+
+$("apple-setup-btn").addEventListener("click", () => {
+  $("sc-url").textContent = `${SUPABASE_URL.replace(/\/+$/, "")}/rest/v1/rpc/import_calendar`;
+  $("sc-key").textContent = SUPABASE_KEY;
+  $("token-row").hidden = true;
+  $("token-hint").hidden = true;
+  $("token-error").hidden = true;
+  $("token-btn").textContent = state.apple.connected ? "Neuen Schlüssel erzeugen" : "Schlüssel erzeugen";
+  shortcutDialog.showModal();
+});
+
+$("token-btn").addEventListener("click", async () => {
+  if (state.apple.connected && !confirm("Neuen Schlüssel erzeugen? Der bisherige Kurzbefehl funktioniert dann erst wieder, wenn du dort den neuen Schlüssel einträgst.")) return;
+  const btn = $("token-btn");
+  btn.disabled = true;
+  $("token-error").hidden = true;
+  try {
+    const token = await cloud.rpc("create_calendar_token");
+    $("token-value").textContent = token;
+    $("token-row").hidden = false;
+    $("token-hint").hidden = false;
+    btn.textContent = "Neuen Schlüssel erzeugen";
+    state.apple = { ...state.apple, connected: true, lastImport: null, lastCount: null, error: null };
+    save();
+    renderApple();
+  } catch (e) {
+    $("token-error").textContent = e instanceof NetworkError ? "Keine Verbindung. Bist du online?" : e.message;
+    $("token-error").hidden = false;
+    if (e instanceof AuthError) setSyncState("auth", e.message);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+for (const btn of document.querySelectorAll("[data-copy]")) {
+  btn.addEventListener("click", async () => {
+    const el = $(btn.dataset.copy);
+    try {
+      await navigator.clipboard.writeText(el.textContent);
+      btn.textContent = "Kopiert ✓";
+      setTimeout(() => (btn.textContent = "Kopieren"), 1500);
+    } catch {
+      // Ohne Zwischenablage-Zugriff: Text markieren, damit er von Hand kopiert werden kann.
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      const sel = getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+      showToast("Bitte den markierten Text kopieren.");
+    }
+  });
+}
+
+$("apple-remove-btn").addEventListener("click", async () => {
+  if (!confirm("Verbindung zum Apple-Kalender trennen? Die übertragenen Termine werden entfernt und der Kurzbefehl funktioniert nicht mehr.")) return;
+  try {
+    await cloud.rpc("remove_calendar");
+    state.apple = { ...emptyApple(), connected: false };
+    save();
+    render();
+    renderApple();
+    showToast("Apple-Kalender getrennt.");
+  } catch (e) {
+    showToast(e instanceof NetworkError ? "Keine Verbindung. Bist du online?" : `Fehler: ${e.message}`);
+  }
+});
 
 /** Verknüpft die Einträge auf diesem Gerät mit dem angemeldeten Konto. */
 function linkAccount(userId) {
@@ -555,7 +716,7 @@ $("logout-btn").addEventListener("click", async () => {
     : "Abmelden? Deine Einträge werden von diesem Gerät entfernt und bleiben in deinem Konto gespeichert.";
   if (!confirm(question)) return;
   await cloud.signOut();
-  Object.assign(state, { items: [], accountId: null, tombstones: {}, pending: new Set(), cursor: null, lastSyncAt: null });
+  Object.assign(state, { items: [], accountId: null, tombstones: {}, pending: new Set(), cursor: null, lastSyncAt: null, apple: emptyApple() });
   save();
   setSyncState("idle");
   render();
@@ -588,7 +749,8 @@ $("prev-week").addEventListener("click", () => setDay(addDays(state.day, -7)));
 $("next-week").addEventListener("click", () => setDay(addDays(state.day, 7)));
 $("today-btn").addEventListener("click", () => setDay(state.today));
 
-for (const dlg of [editor, menu]) {
+const dialogs = [editor, menu, $("apple-info"), shortcutDialog];
+for (const dlg of dialogs) {
   dlg.addEventListener("click", (e) => {
     if (e.target === dlg) dlg.close(); // Tipp auf den Hintergrund
   });
@@ -618,7 +780,7 @@ function tick() {
     state.today = t;
     if (wasToday) state.day = t;
   }
-  if (!editor.open && !menu.open) render();
+  if (!dialogs.some((d) => d.open)) render();
 }
 setInterval(tick, 60_000);
 document.addEventListener("visibilitychange", () => {

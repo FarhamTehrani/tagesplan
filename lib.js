@@ -125,12 +125,12 @@ const byDateThenTitle = (a, b) =>
   (a.date || "").localeCompare(b.date || "") || a.title.localeCompare(b.title, "de");
 
 /**
- * Alles, was an einem Tag angezeigt wird.
+ * Alles, was an einem Tag angezeigt wird. `external` sind zusätzliche Termine (z. B. aus dem Apple-Kalender).
  * Offene Aufgaben aus der Vergangenheit und Aufgaben ohne Datum erscheinen nur am heutigen Tag.
  */
-export function dayView(items, day, today) {
+export function dayView(items, day, today, external = []) {
   const isToday = day === today;
-  const termine = items.filter((i) => i.type === "termin" && i.date === day).sort(compareTermine);
+  const termine = [...items.filter((i) => i.type === "termin" && i.date === day), ...external].sort(compareTermine);
 
   const tasks = items.filter((i) => i.type === "aufgabe");
   const overdue = isToday ? tasks.filter((t) => !t.done && t.date && t.date < today).sort(byDateThenTitle) : [];
@@ -275,4 +275,77 @@ export function mergeRemote(local, rows) {
   }
 
   return { items: [...byId.values()], tombstones: tomb, pending, cursor, changed };
+}
+
+/* ---------- Apple-Kalender (über Kurzbefehl übertragen) ---------- */
+
+/** Zeilen der Tabelle calendar_events prüfen → { id, title, start, end (ms), allDay, calendar, location } */
+export function normalizeAppleEvents(list) {
+  if (!Array.isArray(list)) return [];
+  const out = [];
+  for (const r of list) {
+    if (!r || typeof r !== "object") continue;
+    const start = typeof r.start === "number" ? r.start : Date.parse(r.start_at);
+    const end = typeof r.end === "number" ? r.end : Date.parse(r.end_at);
+    if (typeof r.id !== "string" || !r.id || typeof r.title !== "string" || !Number.isFinite(start) || !Number.isFinite(end)) continue;
+    out.push({
+      id: r.id,
+      title: r.title.slice(0, 200),
+      start,
+      end: Math.max(start, end),
+      allDay: r.allDay === true || r.all_day === true,
+      calendar: typeof r.calendar === "string" ? r.calendar : "",
+      location: typeof r.location === "string" ? r.location : "",
+    });
+  }
+  return out;
+}
+
+const hhmm = (ms) => {
+  const d = new Date(ms);
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+};
+
+/**
+ * Apple-Termine, die einen Tag berühren, im Format der eigenen Termine (nur lesbar).
+ * Mehrtägige Termine erscheinen an jedem Tag; an Folgetagen ohne Uhrzeit.
+ */
+export function appleForDay(events, day) {
+  const dayStart = fromKey(day).getTime();
+  const dayEnd = fromKey(addDays(day, 1)).getTime();
+  const out = [];
+  for (const ev of events) {
+    const touches = ev.start < dayEnd && (ev.end > dayStart || (ev.end === ev.start && ev.start >= dayStart));
+    if (!touches) continue;
+    const startsToday = ev.start >= dayStart;
+    const timed = !ev.allDay && startsToday;
+    out.push({
+      id: `apple:${ev.id}`,
+      type: "termin",
+      source: "apple",
+      title: ev.title,
+      date: day,
+      start: timed ? hhmm(ev.start) : null,
+      end: timed && ev.end > ev.start && ev.end < dayEnd ? hhmm(ev.end) : null,
+      note: "",
+      calendar: ev.calendar,
+      location: ev.location,
+      event: ev,
+    });
+  }
+  return out;
+}
+
+/** Beschreibung von Datum/Zeit eines Apple-Termins für die Detailansicht. */
+export function describeAppleTime(ev) {
+  const startKey = toKey(new Date(ev.start));
+  // Ganztägige Termine enden um 23:59:59 bzw. 0:00 des Folgetags.
+  const endKey = toKey(new Date(ev.allDay ? Math.max(ev.start, ev.end - 1) : ev.end));
+  if (ev.allDay) {
+    return startKey === endKey ? `${formatLong(startKey)}, ganztägig` : `${formatShort(startKey)} – ${formatShort(endKey)}, ganztägig`;
+  }
+  if (startKey === endKey) {
+    return ev.end > ev.start ? `${formatLong(startKey)}, ${hhmm(ev.start)}–${hhmm(ev.end)}` : `${formatLong(startKey)}, ${hhmm(ev.start)}`;
+  }
+  return `${formatShort(startKey)}, ${hhmm(ev.start)} – ${formatShort(endKey)}, ${hhmm(ev.end)}`;
 }

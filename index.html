@@ -144,6 +144,17 @@
       </div>
     </section>
 
+    <section id="apple-section" hidden>
+      <h3 class="menu-heading">Apple-Kalender</h3>
+      <div class="account-card">
+        <p class="sync-status" id="apple-status"></p>
+      </div>
+      <div class="menu-list">
+        <button type="button" id="apple-setup-btn">Kurzbefehl einrichten</button>
+        <button type="button" id="apple-remove-btn" hidden>Verbindung trennen</button>
+      </div>
+    </section>
+
     <h3 class="menu-heading">Sicherung als Datei</h3>
     <p class="hint" id="backup-hint">Deine Einträge werden nur auf diesem Gerät gespeichert. Sichere sie ab und zu als Datei.</p>
     <div class="menu-list">
@@ -152,6 +163,100 @@
       <button type="button" id="clear-done-btn">Erledigte Aufgaben entfernen</button>
     </div>
     <p class="hint" id="install-hint">Tipp: In Safari auf „Teilen“ → „Zum Home-Bildschirm“ tippen, dann startet Tagesplan wie eine App.</p>
+  </dialog>
+
+  <dialog class="sheet" id="apple-info" aria-labelledby="apple-info-title">
+    <div class="sheet-head">
+      <span></span>
+      <h2>Apple-Kalender</h2>
+      <button type="button" class="text-btn strong" data-close>Fertig</button>
+    </div>
+    <h3 class="info-title" id="apple-info-title"></h3>
+    <p class="info-time" id="apple-info-time"></p>
+    <dl class="info-list">
+      <div id="apple-info-cal-row"><dt>Kalender</dt><dd id="apple-info-cal"></dd></div>
+      <div id="apple-info-loc-row"><dt>Ort</dt><dd id="apple-info-loc"></dd></div>
+    </dl>
+    <p class="hint">Aus deinem Apple-Kalender übertragen. Ändern kannst du den Termin in der Kalender-App.</p>
+  </dialog>
+
+  <dialog class="sheet" id="shortcut" aria-labelledby="shortcut-title">
+    <div class="sheet-head">
+      <span></span>
+      <h2 id="shortcut-title">Kurzbefehl einrichten</h2>
+      <button type="button" class="text-btn strong" data-close>Fertig</button>
+    </div>
+    <p class="hint">Ein Kurzbefehl auf deinem iPhone liest deine Termine von heute bis 14 Tage voraus und überträgt sie an Tagesplan. Je nach iOS-Version können Bezeichnungen leicht abweichen.</p>
+
+    <ol class="steps">
+      <li>
+        <h3>Schlüssel erzeugen</h3>
+        <p>Damit weist sich der Kurzbefehl aus. Ein neuer Schlüssel macht den alten ungültig.</p>
+        <button type="button" class="primary-btn" id="token-btn">Schlüssel erzeugen</button>
+        <div class="copy-row" id="token-row" hidden>
+          <code id="token-value"></code>
+          <button type="button" class="copy-btn" data-copy="token-value">Kopieren</button>
+        </div>
+        <p class="hint" id="token-hint" hidden>Der Schlüssel wird nur jetzt angezeigt. Trage ihn gleich in Schritt 6 ein.</p>
+        <p class="field-error" id="token-error" role="alert" hidden></p>
+      </li>
+      <li>
+        <h3>Kurzbefehl anlegen</h3>
+        <p>App <b>Kurzbefehle</b> öffnen, auf <b>+</b> tippen und den Kurzbefehl „Tagesplan Kalender“ nennen.</p>
+      </li>
+      <li>
+        <h3>Termine suchen</h3>
+        <p>Aktion <b>Kalenderereignisse suchen</b> hinzufügen und die Filter so einstellen:</p>
+        <ul>
+          <li><i>Startdatum</i> · <i>ist heute</i></li>
+          <li><b>Filter hinzufügen</b>: <i>Enddatum</i> · <i>ist in den nächsten</i> · <i>14 Tage</i></li>
+          <li>Oben <i>Alle</i> auf <b>Beliebige</b> umstellen, damit beide Filter zusammen gelten.</li>
+          <li><i>Limit</i> ausgeschaltet lassen.</li>
+        </ul>
+      </li>
+      <li>
+        <h3>Jeden Termin als eine Zeile</h3>
+        <p>Aktion <b>Wiederholen mit jedem</b> hinzufügen. Hinein kommt eine Aktion <b>Text</b> mit diesem Aufbau:</p>
+        <p class="template">Startdatum | Enddatum | Ist ganztägig | Kalender | Ort | Titel</p>
+        <p>Jedes Wort ist eine Variable: über der Tastatur <i>Wiederholungsobjekt</i> antippen, einfügen, dann darauf tippen und die Eigenschaft wählen. Die Striche „|“ mit Leerzeichen tippst du selbst.</p>
+        <p><b>Wichtig:</b> Auf <i>Startdatum</i> tippen → <i>Datumsformat</i> → <b>ISO 8601</b> und <b>ISO 8601-Zeit einschließen</b> einschalten. Dasselbe bei <i>Enddatum</i>.</p>
+      </li>
+      <li>
+        <h3>Zeilen zusammenfügen</h3>
+        <p>Unter „Wiederholung beenden“ die Aktion <b>Text kombinieren</b> hinzufügen: <i>Wiederholungsergebnisse</i> mit <b>Neue Zeilen</b> kombinieren.</p>
+      </li>
+      <li>
+        <h3>An Tagesplan senden</h3>
+        <p>Aktion <b>Inhalte von URL abrufen</b> mit dieser URL:</p>
+        <div class="copy-row">
+          <code id="sc-url"></code>
+          <button type="button" class="copy-btn" data-copy="sc-url">Kopieren</button>
+        </div>
+        <p>Weitere Optionen aufklappen: <b>Methode</b> auf <i>POST</i>. Unter <b>Header</b> einen Eintrag: Schlüssel <code>apikey</code>, Wert:</p>
+        <div class="copy-row">
+          <code id="sc-key"></code>
+          <button type="button" class="copy-btn" data-copy="sc-key">Kopieren</button>
+        </div>
+        <p><b>Anfragetext</b>: <i>JSON</i> mit zwei Feldern vom Typ Text:</p>
+        <ul>
+          <li><code>token</code> → dein Schlüssel aus Schritt 1</li>
+          <li><code>events</code> → Variable <i>Kombinierter Text</i></li>
+        </ul>
+        <p>Zum Schluss die Aktion <b>Benachrichtigung anzeigen</b> mit <i>Inhalte von URL</i> hinzufügen. Dann siehst du, wie viele Termine übertragen wurden.</p>
+      </li>
+      <li>
+        <h3>Testen</h3>
+        <p>Den Kurzbefehl mit ▶︎ starten und den Kalenderzugriff erlauben. Die Antwort lautet z. B. „12 Termine übertragen.“ Danach hier im Menü <b>Jetzt abgleichen</b>.</p>
+      </li>
+      <li>
+        <h3>Automatisch ausführen</h3>
+        <p>In Kurzbefehle unten auf <b>Automation</b> → <b>+</b>:</p>
+        <ul>
+          <li><b>Tageszeit</b>, z. B. 6:00 täglich → <b>Sofort ausführen</b> → „Tagesplan Kalender“.</li>
+          <li>Zusätzlich <b>App</b> → <i>Kalender</i> → <b>Wird geschlossen</b> → <b>Sofort ausführen</b>. So kommen Änderungen gleich nach dem Bearbeiten an.</li>
+        </ul>
+      </li>
+    </ol>
   </dialog>
 
   <div class="toast" id="toast" role="status" hidden>

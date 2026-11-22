@@ -37,6 +37,19 @@ Ohne Konto bleiben die Daten nur auf dem Gerät. Dann ab und zu über „…“ 
 
 Ein neues Passwort setzt du im Supabase-Dashboard unter *Authentication → Users*.
 
+## Apple-Kalender (über einen Kurzbefehl)
+
+Ein Kurzbefehl auf dem iPhone liest die Termine von heute bis 14 Tage voraus und schickt sie an die Datenbankfunktion `import_calendar`. In Tagesplan erscheinen sie rot markiert und nur lesbar. Ein öffentlicher Kalender-Link oder ein Apple-Passwort ist dafür nicht nötig.
+
+1. Im Supabase-Dashboard unter **SQL Editor** den Inhalt von [`supabase/kalender.sql`](supabase/kalender.sql) ausführen.
+2. In Tagesplan: **„…“ → Apple-Kalender → Kurzbefehl einrichten**. Die Anleitung dort führt Schritt für Schritt durch den Kurzbefehl und hat Kopier-Buttons für URL, Schlüssel und `apikey`.
+
+Funktionsweise:
+
+- Der Kurzbefehl sendet eine Zeile pro Termin: `Startdatum | Enddatum | Ist ganztägig | Kalender | Ort | Titel` (Daten im Format ISO 8601).
+- Er weist sich mit einem eigenen Schlüssel aus, den die App erzeugt. In der Datenbank liegt nur dessen SHA-256-Hash. Ein neuer Schlüssel oder „Verbindung trennen“ macht den alten sofort ungültig.
+- Jeder Lauf ersetzt alle Termine ab heute. Vergangene Termine bleiben 60 Tage zum Zurückblättern erhalten.
+
 ## Entwicklung
 
 Kein Build-Schritt, keine Abhängigkeiten. Node.js 20+ für die Tests.
@@ -54,12 +67,12 @@ npm run icons  # PNG-Icons neu erzeugen
 | `cloud.js` | Anmeldung und Datenzugriff bei Supabase über `fetch` (ohne Bibliothek) |
 | `config.js` | Project URL und öffentlicher Schlüssel des Supabase-Projekts |
 | `supabase/schema.sql` | Tabelle, Zugriffsregeln und „neuere Änderung gewinnt“-Trigger |
+| `supabase/kalender.sql` | Tabellen und Funktionen für Termine aus dem Apple-Kalender |
 | `sw.js` | Service Worker für Offline-Betrieb (Netzwerk zuerst, sonst Cache) |
 
 Veröffentlicht wird über GitHub Pages direkt aus dem Branch `main`.
 
 ## Ideen für später
 
-- Termine aus dem iCloud-Kalender übernehmen (öffentlicher Kalender-Link, abgerufen über eine GitHub Action oder einen kleinen Proxy)
 - Wiederkehrende Termine und Aufgaben
 - Erinnerungen per Benachrichtigung
