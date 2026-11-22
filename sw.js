@@ -1,11 +1,13 @@
 // Netzwerk zuerst (damit Updates sofort ankommen), offline aus dem Cache.
-const CACHE = "tagesplan-v1";
+const CACHE = "tagesplan-v2";
 const SHELL = [
   "./",
   "index.html",
   "styles.css",
   "app.js",
   "lib.js",
+  "cloud.js",
+  "config.js",
   "manifest.webmanifest",
   "icons/icon.svg",
   "icons/icon-192.png",

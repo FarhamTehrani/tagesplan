@@ -90,6 +90,8 @@ export function normalizeItem(raw) {
     start: type === "termin" ? start : null,
     end: type === "termin" ? end : null,
     note: typeof raw.note === "string" ? raw.note.slice(0, 2000) : "",
+    // Zeitpunkt der letzten Änderung (ms) – entscheidet beim Abgleich, welche Version gewinnt.
+    updatedAt: Number.isFinite(raw.updatedAt) && raw.updatedAt >= 0 ? raw.updatedAt : 0,
   };
   if (type === "aufgabe") {
     item.done = raw.done === true;
@@ -176,4 +178,101 @@ export function toggleDone(item, today) {
 export function newId() {
   if (globalThis.crypto?.randomUUID) return crypto.randomUUID();
   return Date.now().toString(36) + Math.random().toString(36).slice(2);
+}
+
+/* ---------- Abgleich mit dem Konto ---------- */
+
+const hasOwn = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key);
+
+/** Löschmarken: { id: Zeitpunkt der Löschung in ms } */
+export function normalizeTombstones(raw) {
+  const out = {};
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return out;
+  for (const [id, ts] of Object.entries(raw)) if (id && Number.isFinite(ts) && ts >= 0) out[id] = ts;
+  return out;
+}
+
+/**
+ * Vergleicht alte und neue Eintragsliste (nach Objekt-Identität), stempelt geänderte Einträge
+ * mit einem Änderungszeitpunkt und legt Löschmarken für entfernte Einträge an.
+ * Der Zeitpunkt liegt immer nach dem vorherigen, auch wenn die Geräteuhr nachgeht.
+ */
+export function applyChanges(prev, next, tombstones, now) {
+  const prevById = new Map(prev.map((i) => [i.id, i]));
+  const nextIds = new Set();
+  const tomb = { ...tombstones };
+  const changed = [];
+
+  const items = next.map((item) => {
+    nextIds.add(item.id);
+    const old = prevById.get(item.id);
+    if (old === item) return item;
+    changed.push(item.id);
+    delete tomb[item.id];
+    const floor = Math.max(old?.updatedAt ?? 0, item.updatedAt ?? 0, tombstones[item.id] ?? 0);
+    return { ...item, updatedAt: Math.max(now, floor + 1) };
+  });
+
+  for (const old of prev) {
+    if (nextIds.has(old.id)) continue;
+    tomb[old.id] = Math.max(now, (old.updatedAt ?? 0) + 1);
+    changed.push(old.id);
+  }
+  return { items, tombstones: tomb, changed };
+}
+
+/** Zeilen für die Tabelle `items` aus den noch nicht gesicherten Einträgen. */
+export function rowsToPush(items, tombstones, pendingIds, userId) {
+  const byId = new Map(items.map((i) => [i.id, i]));
+  const rows = [];
+  for (const id of pendingIds) {
+    const item = byId.get(id);
+    if (item) {
+      const { id: _id, updatedAt, ...data } = item;
+      rows.push({ user_id: userId, id, data, updated_at: new Date(updatedAt).toISOString(), deleted: false });
+    } else if (hasOwn(tombstones, id)) {
+      rows.push({ user_id: userId, id, data: {}, updated_at: new Date(tombstones[id]).toISOString(), deleted: true });
+    }
+  }
+  return rows;
+}
+
+/**
+ * Übernimmt Zeilen vom Server. Pro Eintrag gewinnt die neuere Änderung;
+ * gleich alte oder ältere Server-Versionen werden ignoriert.
+ */
+export function mergeRemote(local, rows) {
+  const byId = new Map(local.items.map((i) => [i.id, i]));
+  const tomb = { ...local.tombstones };
+  const pending = new Set(local.pending);
+  let cursor = local.cursor ?? null;
+  let changed = false;
+
+  for (const row of rows) {
+    if (row.synced_at && (!cursor || Date.parse(row.synced_at) > Date.parse(cursor))) cursor = row.synced_at;
+    if (typeof row.id !== "string" || !row.id) continue;
+    const remoteTs = Date.parse(row.updated_at);
+    if (!Number.isFinite(remoteTs)) continue;
+
+    const mine = byId.get(row.id);
+    const localTs = mine ? mine.updatedAt : hasOwn(tomb, row.id) ? tomb[row.id] : -Infinity;
+    if (remoteTs <= localTs) continue;
+
+    if (row.deleted) {
+      if (mine) {
+        byId.delete(row.id);
+        changed = true;
+      }
+      tomb[row.id] = remoteTs;
+    } else {
+      const item = normalizeItem({ ...row.data, id: row.id, updatedAt: remoteTs });
+      if (!item) continue;
+      byId.set(row.id, item);
+      delete tomb[row.id];
+      changed = true;
+    }
+    pending.delete(row.id);
+  }
+
+  return { items: [...byId.values()], tombstones: tomb, pending, cursor, changed };
 }

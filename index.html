@@ -24,8 +24,9 @@
         <p class="eyebrow" id="relative"></p>
         <h1 id="day-title">Tagesplan</h1>
       </div>
-      <button class="icon-btn" id="menu-btn" type="button" aria-label="Menü">
+      <button class="icon-btn" id="menu-btn" type="button" aria-label="Konto und Daten">
         <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>
+        <span class="menu-dot" id="menu-dot" hidden></span>
       </button>
     </div>
 
@@ -112,10 +113,39 @@
   <dialog class="sheet" id="menu" aria-labelledby="menu-title">
     <div class="sheet-head">
       <span></span>
-      <h2 id="menu-title">Daten</h2>
+      <h2 id="menu-title">Konto &amp; Daten</h2>
       <button type="button" class="text-btn strong" data-close>Fertig</button>
     </div>
-    <p class="hint">Deine Einträge werden nur auf diesem Gerät gespeichert. Sichere sie ab und zu als Datei.</p>
+
+    <section id="account" hidden>
+      <h3 class="menu-heading">Konto</h3>
+      <form id="login-form" novalidate hidden>
+        <p class="hint">Melde dich an, damit deine Einträge online gesichert und auf allen Geräten gleich sind.</p>
+        <label class="field">
+          <span>E-Mail</span>
+          <input name="email" type="email" autocomplete="username" inputmode="email" autocapitalize="off" spellcheck="false" required>
+        </label>
+        <label class="field">
+          <span>Passwort</span>
+          <input name="password" type="password" autocomplete="current-password" required>
+        </label>
+        <p class="field-error" id="login-error" role="alert" hidden></p>
+        <button type="submit" class="primary-btn" id="login-btn">Anmelden</button>
+      </form>
+      <div id="account-info" hidden>
+        <div class="account-card">
+          <p class="account-email" id="account-email"></p>
+          <p class="sync-status" id="sync-status" aria-live="polite"></p>
+        </div>
+        <div class="menu-list">
+          <button type="button" id="sync-btn">Jetzt abgleichen</button>
+          <button type="button" id="logout-btn">Abmelden</button>
+        </div>
+      </div>
+    </section>
+
+    <h3 class="menu-heading">Sicherung als Datei</h3>
+    <p class="hint" id="backup-hint">Deine Einträge werden nur auf diesem Gerät gespeichert. Sichere sie ab und zu als Datei.</p>
     <div class="menu-list">
       <button type="button" id="export-btn">Sicherung herunterladen</button>
       <label class="file-btn">Sicherung wiederherstellen<input type="file" id="import-input" accept="application/json,.json"></label>

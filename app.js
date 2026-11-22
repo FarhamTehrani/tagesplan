@@ -1,8 +1,10 @@
 import {
   STORAGE_KEY, todayKey, addDays, weekDays, formatLong, formatShort, formatWeekday, fromKey,
   relativeLabel, normalizeItems, normalizeItem, dayView, nowAndNext, dayMarkers, toggleDone,
-  toMinutes, newId,
+  toMinutes, newId, normalizeTombstones, applyChanges, rowsToPush, mergeRemote,
 } from "./lib.js";
+import { createCloud, AuthError, NetworkError } from "./cloud.js";
+import { SUPABASE_URL, SUPABASE_KEY } from "./config.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -10,7 +12,15 @@ const state = {
   items: [],
   today: todayKey(),
   day: todayKey(),
+  // Abgleich mit dem Konto
+  accountId: null, // Konto, zu dem die Einträge auf diesem Gerät gehören
+  tombstones: {}, // gelöschte Einträge: { id: Zeitpunkt }
+  pending: new Set(), // IDs, die noch nicht zum Server übertragen wurden
+  cursor: null, // neuester bekannter Server-Zeitpunkt (synced_at)
+  lastSyncAt: null,
 };
+
+const cloud = SUPABASE_URL && SUPABASE_KEY ? createCloud({ url: SUPABASE_URL, key: SUPABASE_KEY }) : null;
 
 /* ---------- Speicher ---------- */
 
@@ -24,7 +34,15 @@ function load() {
   }
   if (!raw) return;
   try {
-    state.items = normalizeItems(JSON.parse(raw).items);
+    const data = JSON.parse(raw);
+    state.items = normalizeItems(data.items);
+    if (data.version === 2) {
+      state.accountId = typeof data.accountId === "string" ? data.accountId : null;
+      state.tombstones = normalizeTombstones(data.tombstones);
+      state.pending = new Set(Array.isArray(data.pending) ? data.pending.filter((id) => typeof id === "string") : []);
+      state.cursor = typeof data.cursor === "string" ? data.cursor : null;
+      state.lastSyncAt = Number.isFinite(data.lastSyncAt) ? data.lastSyncAt : null;
+    }
   } catch {
     showToast("Gespeicherte Daten konnten nicht gelesen werden.");
   }
@@ -32,24 +50,32 @@ function load() {
 
 function save() {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ version: 1, items: state.items }));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      version: 2,
+      items: state.items,
+      accountId: state.accountId,
+      tombstones: state.tombstones,
+      pending: [...state.pending],
+      cursor: state.cursor,
+      lastSyncAt: state.lastSyncAt,
+    }));
   } catch {
     showToast("Speichern fehlgeschlagen. Ist der Speicher voll oder privat?");
   }
 }
 
-function commit(items, toast) {
+function commit(next, toast) {
   const before = state.items;
-  state.items = items;
+  const result = applyChanges(before, next, state.tombstones, Date.now());
+  state.items = result.items;
+  if (state.accountId) {
+    state.tombstones = result.tombstones;
+    for (const id of result.changed) state.pending.add(id);
+  }
   save();
   render();
-  if (toast) {
-    showToast(toast, "Rückgängig", () => {
-      state.items = before;
-      save();
-      render();
-    });
-  }
+  scheduleSync();
+  if (toast) showToast(toast, "Rückgängig", () => commit(before));
 }
 
 /* ---------- Rendering ---------- */
@@ -352,6 +378,190 @@ $("clear-done-btn").addEventListener("click", () => {
   commit(remaining, removed === 1 ? "1 erledigte Aufgabe entfernt." : `${removed} erledigte Aufgaben entfernt.`);
 });
 
+/* ---------- Konto & Abgleich ---------- */
+
+const sync = { state: "idle", message: "", promise: null, again: false, timer: null };
+
+function scheduleSync(delay = 1500) {
+  if (!cloud?.user) return;
+  clearTimeout(sync.timer);
+  sync.timer = setTimeout(runSync, delay);
+}
+
+function runSync() {
+  clearTimeout(sync.timer);
+  if (!cloud?.user) return Promise.resolve();
+  if (sync.promise) {
+    sync.again = true; // läuft schon – danach noch einmal
+    return sync.promise;
+  }
+  sync.promise = (async () => {
+    do {
+      sync.again = false;
+      await syncOnce();
+    } while (sync.again && cloud.user);
+  })().finally(() => {
+    sync.promise = null;
+  });
+  return sync.promise;
+}
+
+function currentStamp(id) {
+  const item = state.items.find((i) => i.id === id);
+  return item ? item.updatedAt : state.tombstones[id];
+}
+
+async function syncOnce() {
+  setSyncState("syncing");
+  try {
+    // 1. Eigene Änderungen hochladen
+    const ids = [...state.pending];
+    const rows = rowsToPush(state.items, state.tombstones, ids, cloud.user.id);
+    if (rows.length) await cloud.push(rows);
+    const pushed = new Map(rows.map((r) => [r.id, Date.parse(r.updated_at)]));
+    for (const id of ids) {
+      // Nur als gesichert markieren, wenn der Eintrag während des Uploads nicht erneut geändert wurde.
+      if (!pushed.has(id) || currentStamp(id) === pushed.get(id)) state.pending.delete(id);
+    }
+
+    // 2. Änderungen anderer Geräte holen (mit etwas Überlappung, doppelt Geholtes ist harmlos)
+    const since = state.cursor ? new Date(Date.parse(state.cursor) - 60_000).toISOString() : null;
+    const remote = await cloud.pull(since);
+    const merged = mergeRemote(state, remote);
+    state.items = merged.items;
+    state.tombstones = merged.tombstones;
+    state.pending = merged.pending;
+    state.cursor = merged.cursor;
+    state.lastSyncAt = Date.now();
+    save();
+    if (merged.changed) render();
+    setSyncState(state.pending.size ? "pending" : "ok");
+  } catch (e) {
+    save();
+    if (e instanceof AuthError) setSyncState("auth", e.message);
+    else if (e instanceof NetworkError) setSyncState("offline");
+    else setSyncState("error", e.message);
+  }
+}
+
+function setSyncState(s, message = "") {
+  sync.state = s;
+  sync.message = message;
+  renderAccount();
+}
+
+const timeFmt = new Intl.DateTimeFormat("de-DE", { hour: "2-digit", minute: "2-digit" });
+
+function syncStatusText() {
+  const n = state.pending.size;
+  const open = n === 1 ? "1 Änderung" : `${n} Änderungen`;
+  switch (sync.state) {
+    case "syncing": return "Wird abgeglichen …";
+    case "offline": return n ? `Offline – ${open} ${n === 1 ? "wird" : "werden"} gesichert, sobald du online bist.` : "Offline.";
+    case "error": return `Abgleich fehlgeschlagen: ${sync.message}`;
+    case "pending": return `${open} noch nicht gesichert.`;
+    default: {
+      if (!state.lastSyncAt) return "Noch nicht abgeglichen.";
+      const d = new Date(state.lastSyncAt);
+      const when = todayKey(d) === state.today ? `heute um ${timeFmt.format(d)}` : `${formatShort(todayKey(d))} um ${timeFmt.format(d)}`;
+      return `Alles gesichert, ${when}.`;
+    }
+  }
+}
+
+function renderAccount() {
+  if (!cloud) return;
+  const user = cloud.user;
+  $("account").hidden = false;
+  $("login-form").hidden = !!user;
+  $("account-info").hidden = !user;
+  $("backup-hint").textContent = user
+    ? "Zusätzlich zum Konto kannst du eine Sicherung als Datei aufbewahren."
+    : "Ohne Anmeldung werden deine Einträge nur auf diesem Gerät gespeichert. Sichere sie ab und zu als Datei.";
+
+  if (user) {
+    $("account-email").textContent = user.email;
+    const status = $("sync-status");
+    status.textContent = syncStatusText();
+    status.dataset.state = sync.state;
+    $("sync-btn").disabled = sync.state === "syncing";
+  } else if (sync.state === "auth" && sync.message) {
+    const err = $("login-error");
+    err.textContent = sync.message;
+    err.hidden = false;
+  }
+  // Roter Punkt am Menü: Anmeldung abgelaufen oder Abgleich kaputt
+  $("menu-dot").hidden = !(sync.state === "error" || (sync.state === "auth" && state.accountId));
+}
+
+/** Verknüpft die Einträge auf diesem Gerät mit dem angemeldeten Konto. */
+function linkAccount(userId) {
+  if (state.accountId !== userId) {
+    // Erstes Mal (oder anderes Konto): alles Lokale hochladen, Server-Stand komplett holen.
+    state.accountId = userId;
+    state.cursor = null;
+    state.tombstones = {};
+    state.pending = new Set(state.items.map((i) => i.id));
+  }
+  save();
+}
+
+$("login-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const f = e.target.elements;
+  const email = f.email.value.trim();
+  const password = f.password.value;
+  const err = $("login-error");
+  if (!email || !password) {
+    err.textContent = "Bitte E-Mail und Passwort eingeben.";
+    err.hidden = false;
+    return;
+  }
+  err.hidden = true;
+  const btn = $("login-btn");
+  btn.disabled = true;
+  btn.textContent = "Anmelden …";
+  try {
+    const user = await cloud.signIn(email, password);
+    if (state.accountId && state.accountId !== user.id) {
+      const ok = confirm("Die Einträge auf diesem Gerät gehören zu einem anderen Konto. Sollen sie mit diesem Konto zusammengeführt werden?");
+      if (!ok) {
+        await cloud.signOut();
+        return;
+      }
+    }
+    f.password.value = "";
+    linkAccount(user.id);
+    setSyncState("idle");
+    await runSync();
+    if (sync.state === "ok") showToast("Angemeldet – deine Einträge sind gesichert.");
+  } catch (ex) {
+    err.textContent = ex instanceof NetworkError ? "Keine Verbindung. Bist du online?" : ex.message;
+    err.hidden = false;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Anmelden";
+    renderAccount();
+  }
+});
+
+$("sync-btn").addEventListener("click", () => runSync());
+
+$("logout-btn").addEventListener("click", async () => {
+  await runSync();
+  const n = state.pending.size;
+  const question = n
+    ? `${n === 1 ? "1 Änderung ist" : `${n} Änderungen sind`} noch nicht gesichert und ${n === 1 ? "geht" : "gehen"} beim Abmelden verloren. Trotzdem abmelden?`
+    : "Abmelden? Deine Einträge werden von diesem Gerät entfernt und bleiben in deinem Konto gespeichert.";
+  if (!confirm(question)) return;
+  await cloud.signOut();
+  Object.assign(state, { items: [], accountId: null, tombstones: {}, pending: new Set(), cursor: null, lastSyncAt: null });
+  save();
+  setSyncState("idle");
+  render();
+  showToast("Abgemeldet.");
+});
+
 /* ---------- Toast ---------- */
 
 let toastTimer;
@@ -412,8 +622,15 @@ function tick() {
 }
 setInterval(tick, 60_000);
 document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible") tick();
+  if (document.visibilityState !== "visible") return;
+  tick();
+  // Beim Zurückkehren in die App: Änderungen anderer Geräte holen (höchstens alle 30 s).
+  if (!state.lastSyncAt || Date.now() - state.lastSyncAt > 30_000) scheduleSync(0);
 });
+window.addEventListener("online", () => scheduleSync(0));
+setInterval(() => {
+  if (document.visibilityState === "visible") scheduleSync(0);
+}, 5 * 60_000);
 
 if (matchMedia("(display-mode: standalone)").matches || navigator.standalone) {
   $("install-hint").hidden = true;
@@ -424,4 +641,13 @@ if ("serviceWorker" in navigator && location.protocol !== "file:") {
 }
 
 load();
+if (cloud?.user) {
+  linkAccount(cloud.user.id);
+} else if (cloud && state.accountId) {
+  // Früher angemeldet, Anmeldung aber weg: Änderungen werden weiter gesammelt und nach dem Anmelden übertragen.
+  sync.state = "auth";
+  sync.message = "Bitte melde dich erneut an, damit deine Einträge gesichert werden.";
+}
 render();
+renderAccount();
+scheduleSync(0);
