@@ -1,0 +1,12 @@
+{
+  "name": "tagesplan",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Termine und Aufgaben für heute auf einen Blick – als Web-App fürs Handy.",
+  "scripts": {
+    "start": "npx --yes serve@14.2.4 -l 4173 .",
+    "test": "node --test",
+    "icons": "node scripts/make-icons.mjs"
+  }
+}

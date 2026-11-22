@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Tagesplan</title>
+  <meta name="description" content="Termine und Aufgaben für heute auf einen Blick.">
+  <meta name="theme-color" content="#f6f5f2" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#151618" media="(prefers-color-scheme: dark)">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Tagesplan">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="styles.css">
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <header class="top">
+    <div class="title-row">
+      <div>
+        <p class="eyebrow" id="relative"></p>
+        <h1 id="day-title">Tagesplan</h1>
+      </div>
+      <button class="icon-btn" id="menu-btn" type="button" aria-label="Menü">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>
+      </button>
+    </div>
+
+    <nav class="week" aria-label="Woche">
+      <button class="icon-btn small" id="prev-week" type="button" aria-label="Vorherige Woche">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>
+      </button>
+      <ol class="week-days" id="week-days"></ol>
+      <button class="icon-btn small" id="next-week" type="button" aria-label="Nächste Woche">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg>
+      </button>
+    </nav>
+  </header>
+
+  <main id="main">
+    <p class="summary" id="summary" aria-live="polite"></p>
+    <div class="progress" id="progress" hidden><span id="progress-bar"></span></div>
+
+    <section aria-labelledby="h-termine">
+      <h2 id="h-termine">Termine</h2>
+      <ul class="list" id="termine"></ul>
+    </section>
+
+    <section aria-labelledby="h-aufgaben">
+      <h2 id="h-aufgaben">Aufgaben</h2>
+      <ul class="list" id="aufgaben"></ul>
+    </section>
+
+    <button class="link-btn" id="today-btn" type="button" hidden>Zurück zu heute</button>
+  </main>
+
+  <button class="fab" id="add-btn" type="button" aria-label="Neu hinzufügen">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+  </button>
+
+  <dialog class="sheet" id="editor" aria-labelledby="editor-title">
+    <form id="editor-form" method="dialog" novalidate>
+      <div class="sheet-head">
+        <button type="button" class="text-btn" data-close>Abbrechen</button>
+        <h2 id="editor-title">Neu</h2>
+        <button type="submit" class="text-btn strong" value="save">Sichern</button>
+      </div>
+
+      <div class="segmented" role="radiogroup" aria-label="Art">
+        <label><input type="radio" name="type" value="aufgabe" checked><span>Aufgabe</span></label>
+        <label><input type="radio" name="type" value="termin"><span>Termin</span></label>
+      </div>
+
+      <label class="field">
+        <span>Titel</span>
+        <input name="title" type="text" maxlength="200" autocomplete="off" enterkeyhint="done" required>
+      </label>
+      <p class="field-error" id="title-error" hidden>Bitte gib einen Titel ein.</p>
+
+      <label class="field">
+        <span>Datum</span>
+        <input name="date" type="date">
+      </label>
+      <p class="hint" data-for="aufgabe">Ohne Datum erscheint die Aufgabe jeden Tag unter „Irgendwann“.</p>
+      <p class="field-error" id="date-error" hidden>Termine brauchen ein Datum.</p>
+
+      <div class="field-row" data-for="termin">
+        <label class="field">
+          <span>Von</span>
+          <input name="start" type="time">
+        </label>
+        <label class="field">
+          <span>Bis</span>
+          <input name="end" type="time">
+        </label>
+      </div>
+      <p class="hint" data-for="termin">Ohne Uhrzeit gilt der Termin als ganztägig.</p>
+      <p class="field-error" id="time-error" hidden>Das Ende muss nach dem Beginn liegen.</p>
+
+      <label class="field">
+        <span>Notiz</span>
+        <textarea name="note" rows="3" maxlength="2000"></textarea>
+      </label>
+
+      <button type="button" class="danger-btn" id="delete-btn" hidden>Löschen</button>
+    </form>
+  </dialog>
+
+  <dialog class="sheet" id="menu" aria-labelledby="menu-title">
+    <div class="sheet-head">
+      <span></span>
+      <h2 id="menu-title">Daten</h2>
+      <button type="button" class="text-btn strong" data-close>Fertig</button>
+    </div>
+    <p class="hint">Deine Einträge werden nur auf diesem Gerät gespeichert. Sichere sie ab und zu als Datei.</p>
+    <div class="menu-list">
+      <button type="button" id="export-btn">Sicherung herunterladen</button>
+      <label class="file-btn">Sicherung wiederherstellen<input type="file" id="import-input" accept="application/json,.json"></label>
+      <button type="button" id="clear-done-btn">Erledigte Aufgaben entfernen</button>
+    </div>
+    <p class="hint" id="install-hint">Tipp: In Safari auf „Teilen“ → „Zum Home-Bildschirm“ tippen, dann startet Tagesplan wie eine App.</p>
+  </dialog>
+
+  <div class="toast" id="toast" role="status" hidden>
+    <span id="toast-text"></span>
+    <button type="button" id="toast-action" hidden></button>
+  </div>
+
+  <noscript><p class="summary">Tagesplan braucht JavaScript.</p></noscript>
+</body>
+</html>
